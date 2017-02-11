@@ -1,5 +1,168 @@
 #!/usr/bin/perl
+# This file is part of the CernVM File System.
+# Copyright CERN, BSD licensed.
+# Contact: jblomer@cern.ch
+
 use strict;
 use warnings;
 
-print "hello, world\n";
+use Compress::Zlib;
+use File::Fetch;
+use Getopt::Std;
+use Time::Local;
+
+
+# Usage and version information
+# ------------------------------------------------------------------------------
+
+my $VERSION = 0.1;
+my $CONTACT = "jblomer\@cern.ch";
+
+sub main::HELP_MESSAGE {
+  print "Queries the replication status of CernVM-FS repositories.\n";
+  print "Usage:\n  $0 [options]\n";
+  print "Options: \n";
+  print "  -d  Repsitory data file\n";
+  print "  -r  Repository, either by url or by name\n";
+  print "  -y  to be defined\n";
+}
+
+sub main::VERSION_MESSAGE {
+  print "$0 version $VERSION (contact: $CONTACT)\n";
+}
+
+
+# Constants and sub routines
+# ------------------------------------------------------------------------------
+
+my $SUCCESS = "ok";
+$File::Fetch::WARN = 0;  # we check manually for errors
+
+sub main::convertCvmfsDate {
+  my ($timestamp) = (shift);
+
+  my $year = substr($timestamp, 0, 4);
+  my $month = substr($timestamp, 4, 2) - 1;
+  my $day = substr($timestamp, 6, 2);
+  my $hour = substr($timestamp, 8, 2);
+  my $minute = substr($timestamp, 10, 2);
+  my $second = substr($timestamp, 12, 2);
+  my $time_gmt = timegm($second, $minute, $hour, $day, $month, $year);
+  my $time_diff = ($time_gmt - time()) / 84600;
+  return int($time_diff) . 'd';
+}
+
+sub main::shortTime {
+  my ($timestamp) = (shift);
+  my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) =
+    localtime($timestamp);
+  return sprintf("%04d-%02d-%02d %02d:%02d",
+                 $year + 1900, $mon + 1, $mday, $hour, $min);
+}
+
+sub main::fetchManifest {
+  my ($url) = (shift);
+  $url =~ s,(.*)/(\.cvmfspublished)?$,$1,;  # get repo base url
+
+  my $raw_manifest;
+  my $ff = File::Fetch->new(uri => $url . '/.cvmfspublished');
+  $ff->fetch(to => \$raw_manifest) || return ($ff->error("verbose"), ());
+  my @manifest_lines = split /\n/, $raw_manifest;
+
+  my $raw_whitelist;
+  $ff = File::Fetch->new(uri => $url . '/.cvmfswhitelist');
+  $ff->fetch(to => \$raw_whitelist) || return ($ff->error("verbose"), ());
+  my @whitelist_lines = split /\n/, $raw_whitelist;
+
+  my %manifest;
+  foreach my $line (@manifest_lines) {
+    last if ($line eq "--");
+    my $key = substr($line, 0, 1);
+    my $value = substr($line, 1);
+    $manifest{'catalog'}     = $value if ($key eq 'C');
+    $manifest{'gc'}          = $value if ($key eq 'G');
+    $manifest{'last_update'} = $value if ($key eq 'T');
+    $manifest{'metainfo'}    = $value if ($key eq 'M');
+    $manifest{'name'}        = $value if ($key eq 'N');
+    $manifest{'revision'}    = $value if ($key eq 'S');
+    $manifest{'ttl'}         = $value if ($key eq 'D');
+  }
+  my $whitelist;
+  foreach my $line (@whitelist_lines) {
+    my $key = substr($line, 0, 1);
+    my $value = substr($line, 1);
+    if ($key eq 'E') {
+      $manifest{'whitelist_expires'} = convertCvmfsDate($value);
+      last;
+    }
+  }
+  # Expand values
+  $manifest{'gc'} = 'no' if (!defined($manifest{'gc'}));
+  $manifest{'ttl'} = ($manifest{'ttl'} / 60) . "mn";
+  $manifest{'last_update'} = shortTime($manifest{'last_update'});
+  if (defined($manifest{'metainfo'})) {
+    my ($error, $json) = &fetchMetainfo($url, $manifest{'metainfo'});
+    return ($error, ()) if ($error ne $SUCCESS);
+    $manifest{'metainfo'} = $json;
+  } else {
+    $manifest{'metainfo'} = '{}';
+  }
+
+  return ($SUCCESS, %manifest);
+}
+
+sub main::fetchMetainfo {
+  my ($url, $hash) = (shift, shift);
+  my $uri =
+    $url . '/data/' . substr($hash, 0, 2) . '/' . substr($hash, 2) . 'M';
+
+  my $metainfo_compressed;
+  my $ff = File::Fetch->new(uri => $uri);
+  $ff->fetch(to => \$metainfo_compressed) || return ($ff->error("verbose"), ());
+  my $metainfo = uncompress($metainfo_compressed) ||
+    return ("fail to uncompress metainfo at $uri", ());
+  return ($SUCCESS, $metainfo);
+}
+
+sub main::printRepoInfo {
+  my ($manifest_ref) = (shift);
+
+format STDOUT_TOP =
+NAME                  REVISION    LAST UPDATED        TTL     GC     WHITELIST EXPIRES
+--------------------------------------------------------------------------------------
+.
+  format STDOUT =
+@<<<<<<<<<<<<<<...   @########    @<<<<<<<<<<<<<<<    @<<<<<  @<<<   @>>>>>>>>>>>>>>>>
+$manifest_ref->{'name'}, $manifest_ref->{'revision'}, $manifest_ref->{'last_update'}, $manifest_ref->{'ttl'}, $manifest_ref->{'gc'}, $manifest_ref->{'whitelist_expires'}
+.
+  write;
+}
+
+
+# Main routine
+# ------------------------------------------------------------------------------
+
+# Option parsing
+$Getopt::Std::STANDARD_HELP_VERSION = 1;
+our($opt_d, $opt_r, $opt_y, $opt_h, $opt_v);
+getopts('d:r:y:hv');
+if ($opt_v) {
+  VERSION_MESSAGE();
+  exit 0;
+}
+if ($opt_h) {
+  VERSION_MESSAGE();
+  HELP_MESSAGE();
+  exit 0;
+}
+my %host_db;
+if ($opt_d) {
+  %host_db = $opt_d;
+} else if (-e "$0.data") {
+  %host_db = do "$0.data";
+}
+my $repository = $opt_r;
+
+my ($error, %manifest) = &fetchManifest($repository);
+die "FATAL: $error" if ($error ne $SUCCESS);
+printRepoInfo(\%manifest);

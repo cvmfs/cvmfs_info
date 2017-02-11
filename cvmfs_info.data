@@ -1,0 +1,6 @@
+# List of known repository hosts
+
+'hosts' => {
+  'cvmfs-stratum-zero.cern.ch' => {
+  },
+},
