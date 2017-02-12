@@ -2,5 +2,30 @@
 
 'hosts' => {
   'cvmfs-stratum-zero.cern.ch' => {
+    'name' => 'CERN (Stratum 0)',
+  },
+  'cvmfs-stratum-one.cern.ch' => {
+    'name' => 'CERN (Stratum 1)',
+  },
+  'cvmfs.fnal.gov' => {
+    'name' => 'FNAL',
+  },
+  'cvmfs.racf.bnl.gov' => {
+    'name' => 'BNL',
+  },
+  'cernvmfs.gridpp.rl.ac.uk' => {
+    'name' => 'RAL',
+  },
+  'cvmfsrep.grid.sinica.edu.tw' => {
+    'name' => 'ASGC',
+  },
+  'cvmfs-stratum-one.ihep.ac.cn' => {
+    'name' => 'IHEP',
+  },
+},
+
+'domains' => {
+  'cern.ch' => {
+    'host' => 'cvmfs-stratum-zero.cern.ch',
   },
 },

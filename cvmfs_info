@@ -7,8 +7,10 @@ use strict;
 use warnings;
 
 use Compress::Zlib;
+use Data::Dumper;
 use File::Fetch;
 use Getopt::Std;
+use JSON;
 use Time::Local;
 
 
@@ -38,7 +40,14 @@ sub main::VERSION_MESSAGE {
 my $SUCCESS = "ok";
 $File::Fetch::WARN = 0;  # we check manually for errors
 
-sub main::convertCvmfsDate {
+my %host_db;
+
+sub main::findHost {
+  my ($repo_name) = (shift);
+
+}
+
+sub main::convertWhitelistDate {
   my ($timestamp) = (shift);
 
   my $year = substr($timestamp, 0, 4);
@@ -60,9 +69,55 @@ sub main::shortTime {
                  $year + 1900, $mon + 1, $mday, $hour, $min);
 }
 
-sub main::fetchManifest {
+sub extractHost {
+  my ($url) = (shift);
+  $url =~ m,^(http://)?([^:/]+).*,;
+  my $host = $2;
+  if (exists($host_db{'hosts'}) && exists($host_db{'hosts'}{$host})) {
+    return $host_db{'hosts'}{$host}{'name'};
+  }
+  return $host;
+}
+
+sub extractName {
+  my ($url) = (shift);
+  $url =~ m,(^.*/cvmfs)/([^/]+)$,;
+  return $2;
+}
+
+# From manifest, whitelist, meta info, server info, and repository list on
+# the host, construct all relevant data bits.
+sub main::expandInfo {
+  my ($info, $url) = (shift, shift);
+
+  $info->{'host'} = extractHost($url);
+  $info->{'whitelist_expires'}
+    = convertWhitelistDate($info->{'whitelist_expires'});
+  $info->{'gc'} = 'no' if (!defined($info->{'gc'}));
+  $info->{'gc'} = '-' if ($info->{'gc'} eq 'no');
+  $info->{'ttl'} = ($info->{'ttl'} / 60) . 'mn';
+  $info->{'last_update'} = shortTime($info->{'last_update'});
+  $info->{'type'} = '?';
+  $info->{'status'} = 'online';
+  $info->{'server_info'} = decode_json($info->{'server_info'});
+  if (!defined($info->{'server_info'}->{'email'})) {
+    $info->{'host_contact'} = '-';
+  } else {
+    $info->{'host_contact'} = $info->{'server_info'}->{'email'};
+  }
+  $info->{'stratum0'} =
+    decode_json($info->{'metainfo'})->{'recommended-stratum0'};
+  $info->{'stratum1s'} =
+    decode_json($info->{'metainfo'})->{'recommended-stratum1s'};
+}
+
+# Gathers information about a particular repository on a particular host
+sub main::collectInfo {
   my ($url) = (shift);
   $url =~ s,(.*)/(\.cvmfspublished)?$,$1,;  # get repo base url
+  my %info;
+
+  print STDERR "--> querying $url\n";
 
   my $raw_manifest;
   my $ff = File::Fetch->new(uri => $url . '/.cvmfspublished');
@@ -74,41 +129,54 @@ sub main::fetchManifest {
   $ff->fetch(to => \$raw_whitelist) || return ($ff->error("verbose"), ());
   my @whitelist_lines = split /\n/, $raw_whitelist;
 
-  my %manifest;
+  my $server_info;
+  my $server_repos;
+  $url =~ m,(^.*/cvmfs)/[^/]+$,;
+  my $base_url = $1;
+  $ff = File::Fetch->new(uri => $base_url . '/info/v1/meta.json');
+  if ($ff->fetch(to => \$server_info)) {
+    $info{'server_info'} = $server_info;
+  } else {
+    $info{'server_info'} = '{}';
+  }
+  $ff = File::Fetch->new(uri => $base_url . '/info/v1/repositories.json');
+  if ($ff->fetch(to => \$server_repos)) {
+    $info{'server_repos'} = $server_repos;
+  } else {
+    $info{'server_repos'} = '{}';
+  }
+
   foreach my $line (@manifest_lines) {
     last if ($line eq "--");
     my $key = substr($line, 0, 1);
     my $value = substr($line, 1);
-    $manifest{'catalog'}     = $value if ($key eq 'C');
-    $manifest{'gc'}          = $value if ($key eq 'G');
-    $manifest{'last_update'} = $value if ($key eq 'T');
-    $manifest{'metainfo'}    = $value if ($key eq 'M');
-    $manifest{'name'}        = $value if ($key eq 'N');
-    $manifest{'revision'}    = $value if ($key eq 'S');
-    $manifest{'ttl'}         = $value if ($key eq 'D');
+    $info{'catalog'}     = $value if ($key eq 'C');
+    $info{'gc'}          = $value if ($key eq 'G');
+    $info{'last_update'} = $value if ($key eq 'T');
+    $info{'metainfo'}    = $value if ($key eq 'M');
+    $info{'name'}        = $value if ($key eq 'N');
+    $info{'revision'}    = $value if ($key eq 'S');
+    $info{'ttl'}         = $value if ($key eq 'D');
   }
   my $whitelist;
   foreach my $line (@whitelist_lines) {
     my $key = substr($line, 0, 1);
     my $value = substr($line, 1);
     if ($key eq 'E') {
-      $manifest{'whitelist_expires'} = convertCvmfsDate($value);
+      $info{'whitelist_expires'} = $value;
       last;
     }
   }
-  # Expand values
-  $manifest{'gc'} = 'no' if (!defined($manifest{'gc'}));
-  $manifest{'ttl'} = ($manifest{'ttl'} / 60) . "mn";
-  $manifest{'last_update'} = shortTime($manifest{'last_update'});
-  if (defined($manifest{'metainfo'})) {
-    my ($error, $json) = &fetchMetainfo($url, $manifest{'metainfo'});
+  if (defined($info{'metainfo'})) {
+    my ($error, $json) = fetchMetainfo($url, $info{'metainfo'});
     return ($error, ()) if ($error ne $SUCCESS);
-    $manifest{'metainfo'} = $json;
+    $info{'metainfo'} = $json;
   } else {
-    $manifest{'metainfo'} = '{}';
+    $info{'metainfo'} = '{}';
   }
 
-  return ($SUCCESS, %manifest);
+  expandInfo(\%info, $url);
+  return ($SUCCESS, %info);
 }
 
 sub main::fetchMetainfo {
@@ -128,12 +196,12 @@ sub main::printRepoInfo {
   my ($manifest_ref) = (shift);
 
 format STDOUT_TOP =
-NAME                  REVISION    LAST UPDATED        TTL     GC     WHITELIST EXPIRES
---------------------------------------------------------------------------------------
+HOST                  TYPE    STATUS    REVISION    LAST UPDATED        LAST GC     TTL      RESIGN IN    HOST CONTACT
+----------------------------------------------------------------------------------------------------------------------
 .
   format STDOUT =
-@<<<<<<<<<<<<<<...   @########    @<<<<<<<<<<<<<<<    @<<<<<  @<<<   @>>>>>>>>>>>>>>>>
-$manifest_ref->{'name'}, $manifest_ref->{'revision'}, $manifest_ref->{'last_update'}, $manifest_ref->{'ttl'}, $manifest_ref->{'gc'}, $manifest_ref->{'whitelist_expires'}
+@<<<<<<<<<<<<<<...    @<<<<   @<<<<<   @########    @<<<<<<<<<<<<<<<    @>>>>>>     @<<<<<   @>>>>>>>>    @<<<<<<<<<<<<<<<<<<<...
+$manifest_ref->{'host'}, $manifest_ref->{'type'}, $manifest_ref->{'status'}, $manifest_ref->{'revision'}, $manifest_ref->{'last_update'}, $manifest_ref->{'gc'}, $manifest_ref->{'ttl'}, $manifest_ref->{'whitelist_expires'}, $manifest_ref->{'host_contact'}
 .
   write;
 }
@@ -155,14 +223,17 @@ if ($opt_h) {
   HELP_MESSAGE();
   exit 0;
 }
-my %host_db;
 if ($opt_d) {
   %host_db = $opt_d;
-} else if (-e "$0.data") {
-  %host_db = do "$0.data";
+} else {
+  %host_db = do "$0.data" if (-e "$0.data");
 }
 my $repository = $opt_r;
 
-my ($error, %manifest) = &fetchManifest($repository);
+my ($error, %manifest) = collectInfo($repository);
 die "FATAL: $error" if ($error ne $SUCCESS);
+my @infos = [\%manifest];
+foreach my $stratum1 (@{$manifest{'stratum1s'}}) {
+  my ($error, %info) = collectInfo($stratum1) || print "ERROR $error\n";
+}
 printRepoInfo(\%manifest);
