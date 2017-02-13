@@ -8,7 +8,8 @@ use warnings;
 
 use Compress::Zlib;
 use Data::Dumper;
-use File::Fetch;
+use LWP::Simple;
+use LWP::UserAgent;
 use Getopt::Std;
 use JSON;
 use POSIX;
@@ -43,7 +44,6 @@ sub main::VERSION_MESSAGE {
 # ------------------------------------------------------------------------------
 
 my $SUCCESS = "ok";
-$File::Fetch::WARN = 0;  # we check manually for errors
 
 my %host_db;
 # problems to be solved by the repo maintainer
@@ -123,18 +123,16 @@ sub main::checkPorts {
   my ($info) = (shift);
   my $url8k = "http://" . $info->{'host'} . ':8000/cvmfs/' . $info->{'name'} .
     '/.cvmfspublished';
-  my $dummy;
-  my $ff = File::Fetch->new(uri => $url8k);
-  return $ff->fetch(to => \$dummy);
+  my $success = head($url8k);
+  return $success;
 }
 
 sub main::checkGeoApi {
   my ($info) = (shift);
   my $url = "http://" . $info->{'host'} . '/cvmfs/' . $info->{'name'} .
     '/api/v1.0/geo/cvmfs_info/' . $info->{'host'};
-  my $dummy;
-  my $ff = File::Fetch->new(uri => $url);
-  return $ff->fetch(to => \$dummy);
+  my $success = head($url);
+  return $success;
 }
 
 sub main::isExpired {
@@ -239,9 +237,8 @@ sub main::collectInfo {
 
   print STDERR "--> querying $url\n";
 
-  my $raw_manifest;
-  my $ff = File::Fetch->new(uri => $url . '/.cvmfspublished');
-  if (not $ff->fetch(to => \$raw_manifest)) {
+  my $raw_manifest = get($url . '/.cvmfspublished');
+  if (not defined($raw_manifest)) {
     $info{'status'} = 'down';
     $info{'type'} = '?';
     $info{'name'} = extractName($url);
@@ -252,28 +249,28 @@ sub main::collectInfo {
     $info{'last_gc'} = '-';
     $info{'last_sync'} = '-';
     $info{'ttl'} = '-';
-    return ($ff->error("verbose"), %info);
+    return ("could not download $url/.cvmfspublished", %info);
   }
   my @manifest_lines = split /\n/, $raw_manifest;
 
-  my $raw_whitelist;
-  $ff = File::Fetch->new(uri => $url . '/.cvmfswhitelist');
-  $ff->fetch(to => \$raw_whitelist) || return ($ff->error("verbose"), ());
+  my $raw_whitelist = get($url . '/.cvmfswhitelist');
+  return ("could not download $url/.cvmfswhitelist", ())
+    if (!defined($raw_whitelist));
   my @whitelist_lines = split /\n/, $raw_whitelist;
 
   my $server_info;
   my $server_repos;
   $url =~ m,(^.*/cvmfs)/[^/]+$,;
   my $base_url = $1;
-  $ff = File::Fetch->new(uri => $base_url . '/info/v1/meta.json');
-  if ($ff->fetch(to => \$server_info)) {
+  $server_info = get($base_url . '/info/v1/meta.json');
+  if (defined($server_info)) {
     $info{'raw_server_info'} = $server_info;
   } else {
     $info{'raw_server_info'} = '{}';
     push(@{$info{'degredation_report'}}, "host doesn't export meta data");
   }
-  $ff = File::Fetch->new(uri => $base_url . '/info/v1/repositories.json');
-  if ($ff->fetch(to => \$server_repos)) {
+  $server_repos = get($base_url . '/info/v1/repositories.json');
+  if (defined($server_repos)) {
     $info{'raw_server_repos'} = $server_repos;
   } else {
     $info{'raw_server_repos'} = '{}';
@@ -311,17 +308,14 @@ sub main::collectInfo {
       unless grep(/export meta data$/, @repo_degredation_report);
   }
 
-  my $raw_last_snapshot;
-  $ff = File::Fetch->new(uri => $url . '/.cvmfs_last_snapshot');
-  if ($ff->fetch(to => \$raw_last_snapshot)) {
+  my $raw_last_snapshot = get($url . '/.cvmfs_last_snapshot');
+  if (defined($raw_last_snapshot)) {
     $info{'raw_last_snapshot'} = $raw_last_snapshot;
   } else {
     $info{'raw_last_snapshot'} = '-';
   }
-  my $dummy;
-  $ff = File::Fetch->new(uri => $url . '/.cvmfs_is_snapshotting');
-  $info{'is_synchronizing'} = 1 if ($ff->fetch(to => \$dummy));
-  $info{'is_synchronizing'} = 1 if ($ff->fetch(to => \$dummy));
+  my $is_snapshotting = head($url . '/.cvmfs_is_snapshotting');
+  $info{'is_synchronizing'} = $is_snapshotting;
 
   expandInfo(\%info);
   return ($SUCCESS, %info);
@@ -332,10 +326,9 @@ sub main::fetchMetainfo {
   my $uri =
     $url . '/data/' . substr($hash, 0, 2) . '/' . substr($hash, 2) . 'M';
 
-  my $metainfo_compressed;
-  my $ff = File::Fetch->new(uri => $uri);
-  $ff->fetch(to => \$metainfo_compressed) || return ($ff->error("verbose"), ());
-  my $metainfo = uncompress($metainfo_compressed) ||
+  my $response = LWP::UserAgent->new->get($uri);
+  return ("could not download meta-info", ()) if (!$response->is_success);
+  my $metainfo = uncompress($response->content) ||
     return ("fail to uncompress metainfo at $uri", ());
   return ($SUCCESS, $metainfo);
 }
