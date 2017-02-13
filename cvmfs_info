@@ -405,7 +405,7 @@ HOST                  TYPE    STATUS    REVISION    TIMESTAMP           LAST SYN
 
   foreach my $info (@{$infos_ref}) {
     format STDOUT =
-@<<<<<<<<<<<<<<...    @<<<<   @<<<<<   @########    @<<<<<<<<<<<<<<<    @>>>>>>>>     @<<<<<   @>>>>>>>>    @<<<<<<<<<<<<<<<<<<<...
+@<<<<<<<<<<<<<<...    @<<<<   @<<<<<   @########    @<<<<<<<<<<<<<<<    @>>>>>>>>     @<<<<<   @>>>>>>>>    @<<<<<<<<<<<<<<<<<<<<<<<<<<<<<...
 $info->{'host_alias'}, $info->{'type'}, $info->{'status'}, $info->{'revision'}, $info->{'last_update'}, $info->{'last_sync'}, $info->{'ttl'}, $info->{'whitelist_expires'}, $info->{'host_contact'}
 .
     write;
