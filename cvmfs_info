@@ -11,6 +11,7 @@ use Data::Dumper;
 use File::Fetch;
 use Getopt::Std;
 use JSON;
+use POSIX;
 use Time::Local;
 
 
@@ -63,6 +64,30 @@ sub main::convertWhitelistDate {
   my $minute = substr($timestamp, 10, 2);
   my $second = substr($timestamp, 12, 2);
   return timegm($second, $minute, $hour, $day, $month, $year);
+}
+
+
+# Parses a date in the form 'Mon Feb 13 15:01:06 UTC 2017'
+sub main::convertVerboseDate {
+  my ($verbose_date) = (shift);
+  my @months = qw( Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec );
+  my @tokens = split(/\s+/, $verbose_date);
+  my $year = $tokens[5] - 1900;
+  my ($mon) = grep { $months[$_] eq $tokens[1] } 0..$#months;
+  my $mday = $tokens[2];
+  my @tokens_time = split(/:/, $tokens[3]);
+  my $hour = $tokens_time[0];
+  my $min = $tokens_time[1];
+  my $sec = $tokens_time[2];
+  my $timestamp = mktime($sec, $min, $hour, $mday, $mon, $year);
+  # Time zone offset, a little rough
+  my ($lsec,$lmin,$lhour,$lmday,$lmon,$lyear,$lwday,$lyday,$lisdst) =
+    localtime(time);
+  my ($usec,$umin,$uhour,$umday,$umon,$uyear,$uwday,$uyday,$uisdst) =
+    gmtime(time);
+  my $offset = ($lhour - $uhour) * 3600;
+  $timestamp += $offset;
+  return $timestamp;
 }
 
 
@@ -135,6 +160,15 @@ sub main::expandInfo {
   }
   $info->{'ttl'} = ($info->{'raw_ttl'} / 60) . 'mn';
   $info->{'last_update'} = shortTime($info->{'raw_last_update'});
+  if ($info->{'raw_last_snapshot'} eq '-') {
+    $info->{'last_sync'} = '-';
+    $info->{'last_snapshot'} = 0;
+  } else {
+    $info->{'last_snapshot'} = convertVerboseDate($info->{'raw_last_snapshot'});
+    $info->{'last_sync'} =
+      int((time() - convertVerboseDate($info->{'raw_last_snapshot'})) / 60) .
+      'mn';
+  }
   $info->{'server_info'} = decode_json($info->{'raw_server_info'});
   if (!defined($info->{'server_info'}->{'email'})) {
     $info->{'host_contact'} = '-';
@@ -179,13 +213,11 @@ sub main::expandInfo {
     }
   }
 
-  #if (!checkPorts($info)) {
-  #  push(@{$info->{'degredation_report'}},
-  #         "host doesn't listen on port 8000");
-  #}
+  if (!checkPorts($info)) {
+    push(@{$info->{'degredation_report'}}, "host doesn't listen on port 8000");
+  }
   if (($info->{'type'} =~ m,^S1,) && !checkGeoApi($info)) {
-    push(@{$info->{'degredation_report'}},
-           "host doesn't run GeoAPI service");
+    push(@{$info->{'degredation_report'}}, "host doesn't run GeoAPI service");
   }
 
   $info->{'status'} = 'online';
@@ -218,6 +250,7 @@ sub main::collectInfo {
     $info{'host_contact'} = '-';
     $info{'last_update'} = '-';
     $info{'last_gc'} = '-';
+    $info{'last_sync'} = '-';
     $info{'ttl'} = '-';
     return ($ff->error("verbose"), %info);
   }
@@ -278,8 +311,16 @@ sub main::collectInfo {
       unless grep(/export meta data$/, @repo_degredation_report);
   }
 
+  my $raw_last_snapshot;
+  $ff = File::Fetch->new(uri => $url . '/.cvmfs_last_snapshot');
+  if ($ff->fetch(to => \$raw_last_snapshot)) {
+    $info{'raw_last_snapshot'} = $raw_last_snapshot;
+  } else {
+    $info{'raw_last_snapshot'} = '-';
+  }
   my $dummy;
   $ff = File::Fetch->new(uri => $url . '/.cvmfs_is_snapshotting');
+  $info{'is_synchronizing'} = 1 if ($ff->fetch(to => \$dummy));
   $info{'is_synchronizing'} = 1 if ($ff->fetch(to => \$dummy));
 
   expandInfo(\%info);
@@ -300,8 +341,33 @@ sub main::fetchMetainfo {
 }
 
 sub main::isStale {
-  my ($info) = (shift);
-  return 0;
+  my ($infos_ref) = (shift);
+  my ($s0_revision, $s0_timestamp) = (-1, -1);
+  foreach my $info (@{$infos_ref}) {
+    if ($info->{'type'} =~ m,0,) {
+      $s0_revision = $info->{'revision'};
+      $s0_timestamp = $info->{'raw_last_update'};
+      last;
+    }
+  }
+  return 0 if ($s0_revision < 0);  # no stratum 0 found
+
+  my $retval = 0;
+  foreach my $info (@{$infos_ref}) {
+    next if (not ($info->{'type'} =~ m,1,));
+    next if ($info->{'revision'} == $s0_revision);
+    next if ($info->{'status'} eq 'synchz');
+    # Lagging more than 20 minutes behind?
+    if (((time() - $s0_timestamp) > ((15 + 5) * 60)) ||
+        (time() - $info->{'last_snapshot'}) > ((15 + 5) * 60))
+    {
+      $retval = 1;
+      $info->{'status'} = 'degrad' if ($info->{'status'} eq 'online');
+      push(@{$info->{'degredation_report'}}, "synchronization is lagging");
+    }
+  }
+
+  return $retval;
 }
 
 sub main::assessStatus {
@@ -337,23 +403,21 @@ sub main::assessStatus {
 sub main::printRepoInfo {
   my ($infos_ref) = (shift);
 
-  my $repo_status = '?';
-  my @host_status;
+  my ($status_code, $status_text) = assessStatus($infos_ref);
 
 format STDOUT_TOP =
-HOST                  TYPE    STATUS    REVISION    LAST UPDATED        LAST GC     TTL      RESIGN IN    HOST CONTACT
-----------------------------------------------------------------------------------------------------------------------
+HOST                  TYPE    STATUS    REVISION    TIMESTAMP           LAST SYNC     TTL      RESIGN IN    HOST CONTACT
+------------------------------------------------------------------------------------------------------------------------
 .
 
   foreach my $info (@{$infos_ref}) {
     format STDOUT =
-@<<<<<<<<<<<<<<...    @<<<<   @<<<<<   @########    @<<<<<<<<<<<<<<<    @>>>>>>     @<<<<<   @>>>>>>>>    @<<<<<<<<<<<<<<<<<<<...
-$info->{'host_alias'}, $info->{'type'}, $info->{'status'}, $info->{'revision'}, $info->{'last_update'}, $info->{'last_gc'}, $info->{'ttl'}, $info->{'whitelist_expires'}, $info->{'host_contact'}
+@<<<<<<<<<<<<<<...    @<<<<   @<<<<<   @########    @<<<<<<<<<<<<<<<    @>>>>>>>>     @<<<<<   @>>>>>>>>    @<<<<<<<<<<<<<<<<<<<...
+$info->{'host_alias'}, $info->{'type'}, $info->{'status'}, $info->{'revision'}, $info->{'last_update'}, $info->{'last_sync'}, $info->{'ttl'}, $info->{'whitelist_expires'}, $info->{'host_contact'}
 .
     write;
   }
 
-  my ($status_code, $status_text) = assessStatus($infos_ref);
   print "\nOverall status for " . $infos_ref->[0]->{'name'} .
     ": $status_text\n";
   if (@repo_degredation_report) {
