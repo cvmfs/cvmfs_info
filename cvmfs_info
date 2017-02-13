@@ -22,11 +22,15 @@ my $CONTACT = "jblomer\@cern.ch";
 
 sub main::HELP_MESSAGE {
   print "Queries the replication status of CernVM-FS repositories.\n";
-  print "Usage:\n  $0 [options]\n";
-  print "Options: \n";
+  print "\nUsage:\n  $0 [options] <FQRN|URL>\n\n";
+  print "Examples:  $0 -d host.db cernvm-prod.cern.ch\n";
+  print "           $0 http://cvmfs-stratum-zero.cern.ch/cvmfs/cernvm-prod.cern.ch\n";
+  print "           $0 -d host.db -w 123 cernvm-prod.cern.ch\n";
+  print "\nOptions: \n";
   print "  -d  Repsitory data file\n";
-  print "  -r  Repository, either by url or by name\n";
-  print "  -y  to be defined\n";
+  print "  -j  Triggers JSON output\n";
+  print "  -s  Silent on STDOUT (not on STDERR)\n";
+  print "  -w  Wait until all hosts are at least on the given revision\n";
 }
 
 sub main::VERSION_MESSAGE {
@@ -34,13 +38,15 @@ sub main::VERSION_MESSAGE {
 }
 
 
-# Constants and sub routines
+# Helper routines
 # ------------------------------------------------------------------------------
 
 my $SUCCESS = "ok";
 $File::Fetch::WARN = 0;  # we check manually for errors
 
 my %host_db;
+# problems to be solved by the repo maintainer
+my @repo_degredation_report;
 
 sub main::findHost {
   my ($repo_name) = (shift);
@@ -56,10 +62,9 @@ sub main::convertWhitelistDate {
   my $hour = substr($timestamp, 8, 2);
   my $minute = substr($timestamp, 10, 2);
   my $second = substr($timestamp, 12, 2);
-  my $time_gmt = timegm($second, $minute, $hour, $day, $month, $year);
-  my $time_diff = ($time_gmt - time()) / 84600;
-  return int($time_diff) . 'd';
+  return timegm($second, $minute, $hour, $day, $month, $year);
 }
+
 
 sub main::shortTime {
   my ($timestamp) = (shift);
@@ -69,46 +74,124 @@ sub main::shortTime {
                  $year + 1900, $mon + 1, $mday, $hour, $min);
 }
 
-sub extractHost {
+sub main::extractHost {
   my ($url) = (shift);
   $url =~ m,^(http://)?([^:/]+).*,;
-  my $host = $2;
+  return $2;
+}
+
+sub main::getHostAlias {
+  my ($host) = (shift);
   if (exists($host_db{'hosts'}) && exists($host_db{'hosts'}{$host})) {
     return $host_db{'hosts'}{$host}{'name'};
   }
   return $host;
 }
 
-sub extractName {
+sub main::extractName {
   my ($url) = (shift);
   $url =~ m,(^.*/cvmfs)/([^/]+)$,;
   return $2;
 }
 
+sub main::checkPorts {
+  my ($info) = (shift);
+  my $url8k = "http://" . $info->{'host'} . ':8000/cvmfs/' . $info->{'name'} .
+    '/.cvmfspublished';
+  my $dummy;
+  my $ff = File::Fetch->new(uri => $url8k);
+  return $ff->fetch(to => \$dummy);
+}
+
+sub main::checkGeoApi {
+  my ($info) = (shift);
+  my $url = "http://" . $info->{'host'} . '/cvmfs/' . $info->{'name'} .
+    '/api/v1.0/geo/cvmfs_info/' . $info->{'host'};
+  my $dummy;
+  my $ff = File::Fetch->new(uri => $url);
+  return $ff->fetch(to => \$dummy);
+}
+
+sub main::isExpired {
+  my ($info) = (shift);
+  return (convertWhitelistDate($info->{'raw_whitelist_expires'}) - time()) < 0;
+}
+
+
 # From manifest, whitelist, meta info, server info, and repository list on
 # the host, construct all relevant data bits.
 sub main::expandInfo {
-  my ($info, $url) = (shift, shift);
+  my ($info) = (shift);
 
-  $info->{'host'} = extractHost($url);
-  $info->{'whitelist_expires'}
-    = convertWhitelistDate($info->{'whitelist_expires'});
-  $info->{'gc'} = 'no' if (!defined($info->{'gc'}));
-  $info->{'gc'} = '-' if ($info->{'gc'} eq 'no');
-  $info->{'ttl'} = ($info->{'ttl'} / 60) . 'mn';
-  $info->{'last_update'} = shortTime($info->{'last_update'});
-  $info->{'type'} = '?';
-  $info->{'status'} = 'online';
-  $info->{'server_info'} = decode_json($info->{'server_info'});
+  $info->{'name'} = $info->{'raw_name'};
+  $info->{'revision'} = $info->{'raw_revision'};
+  $info->{'whitelist_expires'} = int(
+    ((convertWhitelistDate($info->{'raw_whitelist_expires'}) - time()) / 84600))
+    . 'd';
+  if (!defined($info->{'raw_gc'}) || ($info->{'raw_gc'} eq 'no')) {
+    $info->{'last_gc'} = '-';
+  } else {
+    $info->{'last_gc'} = $info->{'raw_gc'};
+  }
+  $info->{'ttl'} = ($info->{'raw_ttl'} / 60) . 'mn';
+  $info->{'last_update'} = shortTime($info->{'raw_last_update'});
+  $info->{'server_info'} = decode_json($info->{'raw_server_info'});
   if (!defined($info->{'server_info'}->{'email'})) {
     $info->{'host_contact'} = '-';
+    push(@{$info->{'degredation_report'}},
+         "host doesn't export contact information");
   } else {
     $info->{'host_contact'} = $info->{'server_info'}->{'email'};
+    if ($info->{'host_contact'} eq 'you@organisation.org') {
+      push(@{$info->{'degredation_report'}},
+             "host doesn't set contact information");
+    }
   }
-  $info->{'stratum0'} =
-    decode_json($info->{'metainfo'})->{'recommended-stratum0'};
-  $info->{'stratum1s'} =
-    decode_json($info->{'metainfo'})->{'recommended-stratum1s'};
+  $info->{'server_repos'} = decode_json($info->{'raw_server_repos'});
+  $info->{'metainfo'} = decode_json($info->{'raw_metainfo'});
+  if (defined($info->{'metainfo'}->{'recommended-stratum0'})) {
+    $info->{'stratum0'} = $info->{'metainfo'}->{'recommended-stratum0'};
+  } else {
+    $info->{'stratum0'} = '-';
+    push(@repo_degredation_report,
+         "repository doesn't export recommended stratum 0")
+      # don't enter it multiple times
+      unless grep(/export recommended stratum 0$/, @repo_degredation_report);
+  }
+  if (defined($info->{'metainfo'}->{'recommended-stratum1s'})) {
+    $info->{'stratum1s'} = $info->{'metainfo'}->{'recommended-stratum1s'};
+  } else {
+    $info->{'stratum1s'} = [];
+    push(@repo_degredation_report,
+         "repository doesn't export recommended stratum 1s")
+      # don't enter it multiple times
+      unless grep(/export recommended stratum 1s$/, @repo_degredation_report);
+  }
+
+  $info->{'type'} = '?';
+  $info->{'type'} = 'S0+' if ($info->{'stratum0'} eq $info->{'raw_url'});
+  my %stratum1s = map { $_ => 1 } @{$info->{'stratum1s'}};
+  if (exists($stratum1s{$info->{'raw_url'}})) {
+    if ($info->{'type'} eq '?') {
+      $info->{'type'} = 'S1+';
+    } else {
+      $info->{'type'} = 'S0/1+';
+    }
+  }
+
+  #if (!checkPorts($info)) {
+  #  push(@{$info->{'degredation_report'}},
+  #         "host doesn't listen on port 8000");
+  #}
+  if (($info->{'type'} =~ m,^S1,) && !checkGeoApi($info)) {
+    push(@{$info->{'degredation_report'}},
+           "host doesn't run GeoAPI service");
+  }
+
+  $info->{'status'} = 'online';
+  $info->{'status'} = 'synchz' if $info->{'is_synchronizing'};
+  $info->{'status'} = 'degrad' if (@{$info->{'degredation_report'}});
+  $info->{'status'} = 'expird' if isExpired($info);
 }
 
 # Gathers information about a particular repository on a particular host
@@ -116,12 +199,28 @@ sub main::collectInfo {
   my ($url) = (shift);
   $url =~ s,(.*)/(\.cvmfspublished)?$,$1,;  # get repo base url
   my %info;
+  $info{'raw_url'} = $url;
+  $info{'host'} = extractHost($info{'raw_url'});
+  $info{'host_alias'} = getHostAlias($info{'host'});
+  $info{'is_synchronizing'} = 0;
+  $info{'degredation_report'} = [];
 
   print STDERR "--> querying $url\n";
 
   my $raw_manifest;
   my $ff = File::Fetch->new(uri => $url . '/.cvmfspublished');
-  $ff->fetch(to => \$raw_manifest) || return ($ff->error("verbose"), ());
+  if (not $ff->fetch(to => \$raw_manifest)) {
+    $info{'status'} = 'down';
+    $info{'type'} = '?';
+    $info{'name'} = extractName($url);
+    $info{'revision'} = 0;
+    $info{'whitelist_expires'} = '-';
+    $info{'host_contact'} = '-';
+    $info{'last_update'} = '-';
+    $info{'last_gc'} = '-';
+    $info{'ttl'} = '-';
+    return ($ff->error("verbose"), %info);
+  }
   my @manifest_lines = split /\n/, $raw_manifest;
 
   my $raw_whitelist;
@@ -135,47 +234,55 @@ sub main::collectInfo {
   my $base_url = $1;
   $ff = File::Fetch->new(uri => $base_url . '/info/v1/meta.json');
   if ($ff->fetch(to => \$server_info)) {
-    $info{'server_info'} = $server_info;
+    $info{'raw_server_info'} = $server_info;
   } else {
-    $info{'server_info'} = '{}';
+    $info{'raw_server_info'} = '{}';
+    push(@{$info{'degredation_report'}}, "host doesn't export meta data");
   }
   $ff = File::Fetch->new(uri => $base_url . '/info/v1/repositories.json');
   if ($ff->fetch(to => \$server_repos)) {
-    $info{'server_repos'} = $server_repos;
+    $info{'raw_server_repos'} = $server_repos;
   } else {
-    $info{'server_repos'} = '{}';
+    $info{'raw_server_repos'} = '{}';
+    push(@{$info{'degredation_report'}}, "host doesn't export repository list");
   }
 
   foreach my $line (@manifest_lines) {
     last if ($line eq "--");
     my $key = substr($line, 0, 1);
     my $value = substr($line, 1);
-    $info{'catalog'}     = $value if ($key eq 'C');
-    $info{'gc'}          = $value if ($key eq 'G');
-    $info{'last_update'} = $value if ($key eq 'T');
-    $info{'metainfo'}    = $value if ($key eq 'M');
-    $info{'name'}        = $value if ($key eq 'N');
-    $info{'revision'}    = $value if ($key eq 'S');
-    $info{'ttl'}         = $value if ($key eq 'D');
+    $info{'raw_catalog'}     = $value if ($key eq 'C');
+    $info{'raw_gc'}          = $value if ($key eq 'G');
+    $info{'raw_last_update'} = $value if ($key eq 'T');
+    $info{'raw_metainfo'}    = $value if ($key eq 'M');
+    $info{'raw_name'}        = $value if ($key eq 'N');
+    $info{'raw_revision'}    = $value if ($key eq 'S');
+    $info{'raw_ttl'}         = $value if ($key eq 'D');
   }
   my $whitelist;
   foreach my $line (@whitelist_lines) {
     my $key = substr($line, 0, 1);
     my $value = substr($line, 1);
     if ($key eq 'E') {
-      $info{'whitelist_expires'} = $value;
+      $info{'raw_whitelist_expires'} = $value;
       last;
     }
   }
-  if (defined($info{'metainfo'})) {
-    my ($error, $json) = fetchMetainfo($url, $info{'metainfo'});
+  if (defined($info{'raw_metainfo'})) {
+    my ($error, $json) = fetchMetainfo($url, $info{'raw_metainfo'});
     return ($error, ()) if ($error ne $SUCCESS);
-    $info{'metainfo'} = $json;
+    $info{'raw_metainfo'} = $json;
   } else {
-    $info{'metainfo'} = '{}';
+    $info{'raw_metainfo'} = '{}';
+    push(@repo_degredation_report, "repository doesn't export meta data")
+      unless grep(/export meta data$/, @repo_degredation_report);
   }
 
-  expandInfo(\%info, $url);
+  my $dummy;
+  $ff = File::Fetch->new(uri => $url . '/.cvmfs_is_snapshotting');
+  $info{'is_synchronizing'} = 1 if ($ff->fetch(to => \$dummy));
+
+  expandInfo(\%info);
   return ($SUCCESS, %info);
 }
 
@@ -192,18 +299,95 @@ sub main::fetchMetainfo {
   return ($SUCCESS, $metainfo);
 }
 
+sub main::isStale {
+  my ($info) = (shift);
+  return 0;
+}
+
+sub main::assessStatus {
+  my ($infos_ref) = (shift);
+  my $status_text = 'HEALTHY';
+  my $status_code = 0;
+  my $num_up = 0;
+  foreach my $info (@{$infos_ref}) {
+    if ( ($info->{'type'} =~ m,1,) &&
+         (($info->{'status'} eq 'online') ||
+          ($info->{'status'} eq 'synchz') ||
+          ($info->{'status'} eq 'degrad') ||
+          ($info->{'status'} eq 'stale')) )
+    {
+      $num_up++;
+    }
+    if ( (($info->{'status'} eq 'degrad') ||
+          ($info->{'status'} eq 'expird') ||
+          ($info->{'status'} eq 'down')) && ($status_text eq 'HEALTHY') )
+    {
+      $status_text = 'DEGRADED!';
+      $status_code = 1;
+    }
+  }
+  return (3, 'DOWN!') if ($num_up == 0);
+  return (2, 'STALE!') if isStale($infos_ref);
+  return (1, 'DEGRADED!')
+    if (($status_text eq 'HEALTHY') && (@repo_degredation_report));
+  return ($status_code, $status_text);
+}
+
+
 sub main::printRepoInfo {
-  my ($manifest_ref) = (shift);
+  my ($infos_ref) = (shift);
+
+  my $repo_status = '?';
+  my @host_status;
 
 format STDOUT_TOP =
 HOST                  TYPE    STATUS    REVISION    LAST UPDATED        LAST GC     TTL      RESIGN IN    HOST CONTACT
 ----------------------------------------------------------------------------------------------------------------------
 .
-  format STDOUT =
+
+  foreach my $info (@{$infos_ref}) {
+    format STDOUT =
 @<<<<<<<<<<<<<<...    @<<<<   @<<<<<   @########    @<<<<<<<<<<<<<<<    @>>>>>>     @<<<<<   @>>>>>>>>    @<<<<<<<<<<<<<<<<<<<...
-$manifest_ref->{'host'}, $manifest_ref->{'type'}, $manifest_ref->{'status'}, $manifest_ref->{'revision'}, $manifest_ref->{'last_update'}, $manifest_ref->{'gc'}, $manifest_ref->{'ttl'}, $manifest_ref->{'whitelist_expires'}, $manifest_ref->{'host_contact'}
+$info->{'host_alias'}, $info->{'type'}, $info->{'status'}, $info->{'revision'}, $info->{'last_update'}, $info->{'last_gc'}, $info->{'ttl'}, $info->{'whitelist_expires'}, $info->{'host_contact'}
 .
-  write;
+    write;
+  }
+
+  my ($status_code, $status_text) = assessStatus($infos_ref);
+  print "\nOverall status for " . $infos_ref->[0]->{'name'} .
+    ": $status_text\n";
+  if (@repo_degredation_report) {
+    print "Degredation report for " . $infos_ref->[0]->{'name'} . ":\n";
+    foreach my $issue (@repo_degredation_report) {
+      print "  - $issue\n";
+    }
+  }
+
+  foreach my $info (@{$infos_ref}) {
+    if (@{$info->{'degredation_report'}}) {
+      print "\nDegredation report for " . $info->{'host_alias'};
+      print " [" . $info->{'host'} . "]"
+        unless ($info->{'host_alias'} eq $info->{'host'});
+      print ":\n";
+      foreach my $issue (@{$info->{'degredation_report'}}) {
+        print "  - $issue\n";
+      }
+    }
+  }
+
+  return $status_code;
+}
+
+
+sub main::minServedRevision {
+  my ($infos_ref) = (shift);
+  my $min_revision = -1;
+  foreach my $info (@{$infos_ref}) {
+    if (($min_revision < 0) || ($min_revision > $info->{'revision'})) {
+      $min_revision = $info->{'revision'};
+    }
+  }
+  return $min_revision;
 }
 
 
@@ -212,8 +396,8 @@ $manifest_ref->{'host'}, $manifest_ref->{'type'}, $manifest_ref->{'status'}, $ma
 
 # Option parsing
 $Getopt::Std::STANDARD_HELP_VERSION = 1;
-our($opt_d, $opt_r, $opt_y, $opt_h, $opt_v);
-getopts('d:r:y:hv');
+our($opt_d, $opt_j, $opt_s, $opt_w, $opt_h, $opt_v);
+getopts('d:jsw:hv');
 if ($opt_v) {
   VERSION_MESSAGE();
   exit 0;
@@ -228,12 +412,64 @@ if ($opt_d) {
 } else {
   %host_db = do "$0.data" if (-e "$0.data");
 }
-my $repository = $opt_r;
+my $json_output = $opt_j;
+my $silent_output = $opt_s;
+my $wait_for_revision = 0;
+$wait_for_revision = $opt_w if ($opt_w);
 
-my ($error, %manifest) = collectInfo($repository);
-die "FATAL: $error" if ($error ne $SUCCESS);
-my @infos = [\%manifest];
-foreach my $stratum1 (@{$manifest{'stratum1s'}}) {
-  my ($error, %info) = collectInfo($stratum1) || print "ERROR $error\n";
+my $repository = shift;
+if (!defined($repository)) {
+  HELP_MESSAGE();
+  exit 1;
 }
-printRepoInfo(\%manifest);
+
+if (not ($repository =~ m,^http://,)) {
+  if (exists($host_db{'domains'})) {
+    foreach my $domain (sort {$b cmp $a} keys %{$host_db{'domains'}}) {
+      if ($repository =~ m,$domain$,) {
+        $repository =
+          "http://" . $host_db{'domains'}{$domain} . "/cvmfs/" . $repository;
+        print STDERR "--> using Stratum 0 $repository\n";
+        last;
+      }
+    }
+  }
+}
+die "could not determine url for repository $repository"
+  if (not ($repository =~ m,^http://,));
+
+my $min_revision;
+my ($status_code, $status_text);
+do {
+  my ($error, %info_entry) = collectInfo($repository);
+  die "FATAL: $error" if ($error ne $SUCCESS);
+  my %hosts;
+  $hosts{'-'} = '';  # '-' used to indicate missing stratum 0 recommendation
+  $hosts{extractHost($repository)} = '';
+  my @infos;
+  push(@infos, \%info_entry);
+  foreach my $endpoint (($info_entry{'stratum0'}, @{$info_entry{'stratum1s'}}))
+  {
+    next if (exists($hosts{extractHost($endpoint)}));
+    my ($error, %info) = collectInfo($endpoint);
+    $hosts{extractHost($endpoint)} = '';
+    push(@infos, \%info);
+  }
+  if (not $silent_output) {
+    if ($json_output) {
+      print encode_json(\@infos);
+    } else {
+      @infos = sort {$a->{'type'} cmp $b->{'type'}} @infos;
+      printRepoInfo(\@infos);
+    }
+  }
+  ($status_code, $status_text) = assessStatus(\@infos);
+  exit $status_code if ($status_text eq 'DOWN!');
+  $min_revision = minServedRevision(\@infos);
+  if ($wait_for_revision && ($min_revision < $wait_for_revision)) {
+    print STDERR "\n--> Lowest revision served is $min_revision, " .
+                 "waiting for $wait_for_revision\n";
+    sleep 20;
+  }
+} while ($wait_for_revision > $min_revision);
+exit $status_code;

@@ -22,10 +22,22 @@
   'cvmfs-stratum-one.ihep.ac.cn' => {
     'name' => 'IHEP',
   },
+  'cvmfsrepo.lcg.triumf.ca' => {
+    'name' => 'TRIUMF',
+  },
+  'cvmfs01.nikhef.nl' => {
+    'name' => 'NIKHEF',
+  },
 },
 
 'domains' => {
-  'cern.ch' => {
-    'host' => 'cvmfs-stratum-zero.cern.ch',
-  },
+  'cern.ch' => 'cvmfs-stratum-zero.cern.ch',
+  'cernvm-devel.cern.ch' => 'hepvm.cern.ch',
+  'cernvm-testing.cern.ch' => 'hepvm.cern.ch',
+  'cernvm-sl7.cern.ch' => 'hepvm.cern.ch',
+  'cvmfs-atlas-nightlies.cern.ch' => 'atlas-nightlies.cern.ch',
+  'cvm-ib.cern.ch' => 'cvmfs-cms-ib.cern.ch',
+  'egi.eu' => 'cvmfs-stratum0.gridpp.rl.ac.uk',
+  'desy.de' => 'grid-cvmfs-null.desy.de',
+  'opensciencegrid.org' => 'oasis-replica.opensciencegrid.org',
 },
