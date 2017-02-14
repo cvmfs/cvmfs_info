@@ -47,7 +47,7 @@ my $SUCCESS = "ok";
 
 my %host_db;
 # problems to be solved by the repo maintainer
-my @repo_degredation_report;
+my @repo_degradation_report;
 
 sub main::findHost {
   my ($repo_name) = (shift);
@@ -172,12 +172,12 @@ sub main::expandInfo {
   $info->{'server_info'} = decode_json($info->{'raw_server_info'});
   if (!defined($info->{'server_info'}->{'email'})) {
     $info->{'host_contact'} = '-';
-    push(@{$info->{'degredation_report'}},
+    push(@{$info->{'degradation_report'}},
          "host doesn't export contact information");
   } else {
     $info->{'host_contact'} = $info->{'server_info'}->{'email'};
     if ($info->{'host_contact'} eq 'you@organisation.org') {
-      push(@{$info->{'degredation_report'}},
+      push(@{$info->{'degradation_report'}},
              "host doesn't set contact information");
     }
   }
@@ -187,19 +187,19 @@ sub main::expandInfo {
     $info->{'stratum0'} = $info->{'metainfo'}->{'recommended-stratum0'};
   } else {
     $info->{'stratum0'} = '-';
-    push(@repo_degredation_report,
+    push(@repo_degradation_report,
          "repository doesn't export recommended stratum 0")
       # don't enter it multiple times
-      unless grep(/export recommended stratum 0$/, @repo_degredation_report);
+      unless grep(/export recommended stratum 0$/, @repo_degradation_report);
   }
   if (defined($info->{'metainfo'}->{'recommended-stratum1s'})) {
     $info->{'stratum1s'} = $info->{'metainfo'}->{'recommended-stratum1s'};
   } else {
     $info->{'stratum1s'} = [];
-    push(@repo_degredation_report,
+    push(@repo_degradation_report,
          "repository doesn't export recommended stratum 1s")
       # don't enter it multiple times
-      unless grep(/export recommended stratum 1s$/, @repo_degredation_report);
+      unless grep(/export recommended stratum 1s$/, @repo_degradation_report);
   }
 
   $info->{'type'} = '?';
@@ -214,15 +214,15 @@ sub main::expandInfo {
   }
 
   if (!checkPorts($info)) {
-    push(@{$info->{'degredation_report'}}, "host doesn't listen on port 8000");
+    push(@{$info->{'degradation_report'}}, "host doesn't listen on port 8000");
   }
   if (($info->{'type'} =~ m,^S1,) && !checkGeoApi($info)) {
-    push(@{$info->{'degredation_report'}}, "host doesn't run GeoAPI service");
+    push(@{$info->{'degradation_report'}}, "host doesn't run GeoAPI service");
   }
 
   $info->{'status'} = 'online';
   $info->{'status'} = 'synchz' if $info->{'is_synchronizing'};
-  $info->{'status'} = 'degrad' if (@{$info->{'degredation_report'}});
+  $info->{'status'} = 'degrad' if (@{$info->{'degradation_report'}});
   $info->{'status'} = 'expird' if isExpired($info);
 }
 
@@ -235,7 +235,7 @@ sub main::collectInfo {
   $info{'host'} = extractHost($info{'raw_url'});
   $info{'host_alias'} = getHostAlias($info{'host'});
   $info{'is_synchronizing'} = 0;
-  $info{'degredation_report'} = [];
+  $info{'degradation_report'} = [];
 
   print STDERR "--> querying $url\n";
 
@@ -269,14 +269,14 @@ sub main::collectInfo {
     $info{'raw_server_info'} = $server_info;
   } else {
     $info{'raw_server_info'} = '{}';
-    push(@{$info{'degredation_report'}}, "host doesn't export meta data");
+    push(@{$info{'degradation_report'}}, "host doesn't export meta data");
   }
   $server_repos = get($base_url . '/info/v1/repositories.json');
   if (defined($server_repos)) {
     $info{'raw_server_repos'} = $server_repos;
   } else {
     $info{'raw_server_repos'} = '{}';
-    push(@{$info{'degredation_report'}}, "host doesn't export repository list");
+    push(@{$info{'degradation_report'}}, "host doesn't export repository list");
   }
 
   foreach my $line (@manifest_lines) {
@@ -306,8 +306,8 @@ sub main::collectInfo {
     $info{'raw_metainfo'} = $json;
   } else {
     $info{'raw_metainfo'} = '{}';
-    push(@repo_degredation_report, "repository doesn't export meta data")
-      unless grep(/export meta data$/, @repo_degredation_report);
+    push(@repo_degradation_report, "repository doesn't export meta data")
+      unless grep(/export meta data$/, @repo_degradation_report);
   }
 
   my $raw_last_snapshot = get($url . '/.cvmfs_last_snapshot');
@@ -358,7 +358,7 @@ sub main::isStale {
     {
       $retval = 1;
       $info->{'status'} = 'degrad' if ($info->{'status'} eq 'online');
-      push(@{$info->{'degredation_report'}}, "synchronization is lagging");
+      push(@{$info->{'degradation_report'}}, "synchronization is lagging");
     }
   }
 
@@ -390,7 +390,7 @@ sub main::assessStatus {
   return (3, 'DOWN!') if ($num_up == 0);
   return (2, 'STALE!') if isStale($infos_ref);
   return (1, 'DEGRADED!')
-    if (($status_text eq 'HEALTHY') && (@repo_degredation_report));
+    if (($status_text eq 'HEALTHY') && (@repo_degradation_report));
   return ($status_code, $status_text);
 }
 
@@ -415,20 +415,20 @@ $info->{'host_alias'}, $info->{'type'}, $info->{'status'}, $info->{'revision'}, 
 
   print "\nOverall status for " . $infos_ref->[0]->{'name'} .
     ": $status_text\n";
-  if (@repo_degredation_report) {
-    print "Degredation report for " . $infos_ref->[0]->{'name'} . ":\n";
-    foreach my $issue (@repo_degredation_report) {
+  if (@repo_degradation_report) {
+    print "Degradation report for " . $infos_ref->[0]->{'name'} . ":\n";
+    foreach my $issue (@repo_degradation_report) {
       print "  - $issue\n";
     }
   }
 
   foreach my $info (@{$infos_ref}) {
-    if (@{$info->{'degredation_report'}}) {
-      print "\nDegredation report for " . $info->{'host_alias'};
+    if (@{$info->{'degradation_report'}}) {
+      print "\nDegradation report for " . $info->{'host_alias'};
       print " [" . $info->{'host'} . "]"
         unless ($info->{'host_alias'} eq $info->{'host'});
       print ":\n";
-      foreach my $issue (@{$info->{'degredation_report'}}) {
+      foreach my $issue (@{$info->{'degradation_report'}}) {
         print "  - $issue\n";
       }
     }
