@@ -123,8 +123,10 @@ sub main::checkPorts {
   my ($info) = (shift);
   my $url8k = "http://" . $info->{'host'} . ':8000/cvmfs/' . $info->{'name'} .
     '/.cvmfspublished';
-  my $success = head($url8k);
-  return $success;
+  my $ua = LWP::UserAgent->new;
+  $ua->timeout(5);
+  my $response = $ua->head($url8k);
+  return $response->is_success;
 }
 
 sub main::checkGeoApi {
