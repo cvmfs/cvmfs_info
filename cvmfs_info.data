@@ -28,6 +28,9 @@
   'cvmfs01.nikhef.nl' => {
     'name' => 'NIKHEF',
   },
+  'cvmfs-stratum-one.cc.kek.jp' => {
+    'name' => 'KEK',
+  },
 },
 
 'domains' => {
