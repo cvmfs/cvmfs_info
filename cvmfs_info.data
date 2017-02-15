@@ -13,8 +13,14 @@
   'cvmfs.racf.bnl.gov' => {
     'name' => 'BNL',
   },
-  'cernvmfs.gridpp.rl.ac.uk' => {
+  'cvmfs-wlcg.gridpp.rl.ac.uk' => {
     'name' => 'RAL',
+  },
+  'cvmfs-egi.gridpp.rl.ac.uk' => {
+    'name' => 'RAL (EGI S1)',
+  },
+  'cvmfs-stratum0.gridpp.rl.ac.uk' => {
+    'name' => 'RAL (Stratum 0)',
   },
   'cvmfsrep.grid.sinica.edu.tw' => {
     'name' => 'ASGC',
@@ -26,7 +32,10 @@
     'name' => 'TRIUMF',
   },
   'cvmfs01.nikhef.nl' => {
-    'name' => 'NIKHEF',
+    'name' => 'NIKHEF (Stratum 1)',
+  },
+  'mesthoop.nikhef.nl' => {
+    'name' => 'NIKHEF (Stratum 0)',
   },
   'cvmfs-stratum-one.cc.kek.jp' => {
     'name' => 'KEK',
@@ -43,4 +52,5 @@
   'egi.eu' => 'cvmfs-stratum0.gridpp.rl.ac.uk',
   'desy.de' => 'grid-cvmfs-null.desy.de',
   'opensciencegrid.org' => 'oasis-replica.opensciencegrid.org',
+  '.nl' => 'mesthoop.nikhef.nl',
 },
