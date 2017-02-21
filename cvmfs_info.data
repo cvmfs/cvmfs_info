@@ -38,7 +38,10 @@
     'name' => 'NIKHEF (Stratum 0)',
   },
   'cvmfs-stratum-one.cc.kek.jp' => {
-    'name' => 'KEK',
+    'name' => 'KEK (Stratum 1)',
+  },
+  'cvmfs-stratum-zero.cc.kek.jp' => {
+    'name' => 'KEK (Stratum 0)',
   },
 },
 
@@ -53,4 +56,5 @@
   'desy.de' => 'grid-cvmfs-null.desy.de',
   'opensciencegrid.org' => 'oasis-replica.opensciencegrid.org',
   '.nl' => 'mesthoop.nikhef.nl',
+  'kek.jp' => 'cvmfs-stratum-zero.cc.kek.jp',
 },

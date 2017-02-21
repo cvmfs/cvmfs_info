@@ -1,0 +1,16 @@
+{
+  "administrator" : "Jakob Blomer",
+  "email"         : "jblomer@cern.ch",
+  "organisation"  : "CERN",
+  "description"   : "CernVM operating system production repository",
+  "url"           : "https://cernvm.cern.ch",
+  "recommended-stratum0" : "http://cvmfs-stratum-zero.cern.ch/cvmfs/cernvm-prod.cern.ch",
+  "recommended-stratum1s" : [ "http://cvmfs-stratum-one.cern.ch/cvmfs/cernvm-prod.cern.ch",
+                              "http://cvmfs.fnal.gov/cvmfs/cernvm-prod.cern.ch",
+                              "http://cvmfs.racf.bnl.gov/cvmfs/cernvm-prod.cern.ch",
+                              "http://cvmfs-wlcg.gridpp.rl.ac.uk/cvmfs/cernvm-prod.cern.ch" ],
+
+  "custom" : {
+    "_comment" : ""
+  }
+}
