@@ -516,7 +516,8 @@ do {
   }
   if (not $silent_output) {
     if ($json_output) {
-      print encode_json(\@infos);
+      my $json = JSON->new->allow_blessed;
+      print $json->encode(\@infos);
     } else {
       @infos = sort {$a->{'type'} cmp $b->{'type'}} @infos;
       printRepoInfo(\@infos);
