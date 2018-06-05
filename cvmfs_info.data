@@ -7,10 +7,10 @@
   'cvmfs-stratum-one.cern.ch' => {
     'name' => 'CERN (Stratum 1)',
   },
-  'cvmfs.fnal.gov' => {
+  'cvmfs-s1fnal.opensciencegrid.org' => {
     'name' => 'FNAL',
   },
-  'cvmfs.racf.bnl.gov' => {
+  'cvmfs-s1bnl.opensciencegrid.org' => {
     'name' => 'BNL',
   },
   'cvmfs-wlcg.gridpp.rl.ac.uk' => {
@@ -50,6 +50,8 @@
   'cernvm-devel.cern.ch' => 'hepvm.cern.ch',
   'cernvm-testing.cern.ch' => 'hepvm.cern.ch',
   'cernvm-sl7.cern.ch' => 'hepvm.cern.ch',
+  'cernvm-slc5.cern.ch' => 'hepvm.cern.ch',
+  'jade.cern.ch' => 'hepvm.cern.ch',
   'cvmfs-atlas-nightlies.cern.ch' => 'atlas-nightlies.cern.ch',
   'cvm-ib.cern.ch' => 'cvmfs-cms-ib.cern.ch',
   'egi.eu' => 'cvmfs-stratum0.gridpp.rl.ac.uk',
