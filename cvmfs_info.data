@@ -56,7 +56,7 @@
   'cvm-ib.cern.ch' => 'cvmfs-cms-ib.cern.ch',
   'egi.eu' => 'cvmfs-stratum0.gridpp.rl.ac.uk',
   'desy.de' => 'grid-cvmfs-null.desy.de',
-  'opensciencegrid.org' => 'oasis-replica.opensciencegrid.org',
+  'opensciencegrid.org' => 'cvmfs-s1fnal.opensciencegrid.org',
   '.nl' => 'mesthoop.nikhef.nl',
   'kek.jp' => 'cvmfs-stratum-zero.cc.kek.jp',
   'gridpp.ac.uk' => 'cvmfs-stratum0.gridpp.rl.ac.uk'
