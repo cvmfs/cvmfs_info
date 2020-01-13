@@ -10,7 +10,13 @@
   'cvmfs-s1fnal.opensciencegrid.org' => {
     'name' => 'FNAL',
   },
+  'cvmfs.fnal.gov' => {
+    'name' => 'FNAL',
+  },
   'cvmfs-s1bnl.opensciencegrid.org' => {
+    'name' => 'BNL',
+  },
+  'cvmfs.racf.bnl.gov' => {
     'name' => 'BNL',
   },
   'cvmfs-wlcg.gridpp.rl.ac.uk' => {
