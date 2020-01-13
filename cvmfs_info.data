@@ -16,7 +16,7 @@
   'cvmfs-s1bnl.opensciencegrid.org' => {
     'name' => 'BNL',
   },
-  'cvmfs.racf.bnl.gov' => {
+  'cvmfs.sdcc.bnl.gov' => {
     'name' => 'BNL',
   },
   'cvmfs-wlcg.gridpp.rl.ac.uk' => {
